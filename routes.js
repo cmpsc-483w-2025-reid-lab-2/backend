@@ -6,51 +6,42 @@ const fs = require("fs");
 const connection = require("./db-connection");
 
 // Set up multer for file upload
-const upload = multer({ dest: "uploads/" }); // Files are stored in ./uploads/
+const upload = multer({ dest: "uploads/" });
 
-// Utility: parse a CSV file and return the data as an array of objects
-function parseCsv(filePath) {
+const readline = require("readline");
+
+function parseMantisCsv(filePath) {
   return new Promise((resolve, reject) => {
-    const results = [];
-    fs.createReadStream(filePath)
-      .pipe(csv())
-      .on("data", (data) => results.push(data))
-      .on("end", () => resolve(results))
-      .on("error", (err) => reject(err));
-  });
-}
+    const outputRows = [];
 
-// Insert one heart rate data entry into the database
-function insertHeartRate(data, sessionId) {
-  return new Promise((resolve, reject) => {
-    const entry = {
-      session_id: sessionId,
-      avg_rate: data.avg_rate,
-      max_rate: data.max_rate,
-      min_rate: data.min_rate,
-      time_started: data.time_started,
-      session_length: data.session_length,
-    };
+    const input = fs.createReadStream(filePath);
+    const rl = readline.createInterface({ input });
 
-    connection.query("INSERT INTO heart_data SET ?", entry, (err, results) => {
-      if (err) return reject(err);
-      resolve(results);
+    const tempPath = `${filePath}-cleaned.csv`;
+    const tempStream = fs.createWriteStream(tempPath);
+
+    let lineCount = 0;
+    rl.on("line", (line) => {
+      if (lineCount >= 5) tempStream.write(line + "\n");
+      lineCount++;
     });
-  });
-}
 
-// Insert one mantis shot entry into the database
-function insertMantisShot(data, sessionId) {
-  return new Promise((resolve, reject) => {
-    const entry = {
-      session_id: sessionId,
-      split: data.split,
-      score: data.score,
-    };
+    rl.on("close", () => {
+      tempStream.end();
 
-    connection.query("INSERT INTO mantis_data_shots SET ?", entry, (err, results) => {
-      if (err) return reject(err);
-      resolve(results);
+      // Now re-parse just the valid part
+      fs.createReadStream(tempPath)
+        .pipe(csv())
+        .on("data", (row) => {
+          if (row["ID"] && row["Score"]) {
+            outputRows.push(row);
+          }
+        })
+        .on("end", () => {
+          fs.unlink(tempPath, () => {}); // cleanup temp
+          resolve(outputRows);
+        })
+        .on("error", reject);
     });
   });
 }
@@ -81,65 +72,50 @@ router.post("/users", (req, res) => {
 });
 
 // POST route to upload two CSV files (heart rate + mantis shots)
-router.post("/upload", upload.fields([
-  { name: "heartRateFile" },
-  { name: "mantisFile" }
-]), async (req, res) => {
-  const heartRateFile = req.files?.heartRateFile?.[0];
-  const mantisFile = req.files?.mantisFile?.[0];
+router.post("/upload", upload.single("mantisFile"), async (req, res) => {
+  const file = req.file;
 
-  if (!heartRateFile || !mantisFile) {
-    return res.status(400).json({ error: "Both files are required." });
+  if (!file) {
+    return res.status(400).json({ error: "MANTIS CSV file is required." });
   }
 
   try {
-    const heartData = await parseCsv(heartRateFile.path);
-    const mantisData = await parseCsv(mantisFile.path);
+    const sessions = await parseMantisCsv(file.path);
+    if (sessions.length === 0) {
+      return res.status(400).json({ error: "No valid session data found." });
+    }
 
-    // Create a new session for this upload
-    const newSession = {
-      user_id: 1, // TEMP: Use actual logged-in user later
-      total_shots: mantisData.length,
-      avg_score: mantisData.reduce((acc, d) => acc + parseFloat(d.score || 0), 0) / mantisData.length,
-      time_started: heartData[0]?.time_started || new Date(),
-      session_length: heartData[0]?.session_length || new Date(),
-    };
+    // Flush existing sessions
+    await connection.promise().query("SET FOREIGN_KEY_CHECKS = 0");
+    await connection.promise().query("TRUNCATE TABLE mantis_data_sessions");
+    await connection.promise().query("SET FOREIGN_KEY_CHECKS = 1");
 
-    // Insert new session
-    connection.query("INSERT INTO mantis_data_sessions SET ?", newSession, async (err, result) => {
-      if (err) {
-        console.error(err);
-        return res.status(500).json({ error: "Failed to save session." });
-      }
+    // Insert all sessions
+    for (const row of sessions) {
+      const newSession = {
+        session_id: parseInt(row["ID"]),
+        user_id: 1, // TEMP
+        total_shots: parseInt(row["Shot Count"]) || 0,
+        avg_score: parseFloat(row["Score"]) || 0,
+        time_started: new Date(row["Date"]),  // <-- this works fine with UTC string!
+        session_length: new Date(1000 * 60 * 5), // Placeholder: 5 minutes
+      };
+      
 
-      const sessionId = result.insertId;
+      await connection.promise().query("INSERT INTO mantis_data_sessions SET ?", newSession);
+    }
 
-      // Insert parsed heart rate data
-      for (const row of heartData) {
-        await insertHeartRate(row, sessionId);
-      }
+    fs.unlink(file.path, () => {}); // Clean up temp file
 
-      // Insert parsed mantis shot data
-      for (const row of mantisData) {
-        await insertMantisShot(row, sessionId);
-      }
-
-      // Cleaning up uploaded files
-      fs.unlink(heartRateFile.path, (err) => {
-        if (err) console.error("Failed to delete heart rate file:", err);
-      });
-
-      fs.unlink(mantisFile.path, (err) => {
-        if (err) console.error("Failed to delete mantis file:", err);
-      });
-
-      res.json({ message: "Upload complete and data saved.", sessionId });
+    res.json({
+      message: `Uploaded ${sessions.length} MANTIS session(s) successfully.`,
     });
 
   } catch (err) {
-    console.error("File upload error:", err);
-    res.status(500).json({ error: "Server failed to process the files." });
+    console.error("CSV processing error:", err);
+    res.status(500).json({ error: "Failed to process MANTIS session CSV." });
   }
 });
+
 
 module.exports = router;
