@@ -117,5 +117,47 @@ router.post("/upload", upload.single("mantisFile"), async (req, res) => {
   }
 });
 
+// POST route to upload heart rate CSV.
+// Kotlin client side uses this to post the heart rate CSV into the database.
+router.post("/upload/heart", upload.single("heartCsv"), async (req, res) => {
+  const file = req.file;
+  const userId = req.body.user_id || 1; 
+
+  if (!file) {
+    return res.status(400).json({ error: "Heart CSV is required." });
+  }
+
+  try {
+    const rows = await parseCsv(file.path);
+
+    if (rows.length === 0) {
+      return res.status(400).json({ error: "CSV has no usable data." });
+    }
+
+    const avgRate = rows.reduce((sum, r) => sum + parseInt(r["rate"]), 0) / rows.length;
+    const maxRate = Math.max(...rows.map(r => parseInt(r["rate"])));
+    const minRate = Math.min(...rows.map(r => parseInt(r["rate"])));
+    const timeStarted = new Date(rows[0]["timestamp"]);
+    const sessionLength = new Date(new Date(rows[rows.length - 1]["timestamp"]) - timeStarted);
+
+    const sessionData = {
+      user_id: userId,
+      avg_rate: avgRate,
+      max_rate: maxRate,
+      min_rate: minRate,
+      time_started: timeStarted,
+      session_length: sessionLength,
+    };
+
+    await connection.promise().query("INSERT INTO heart_data SET ?", sessionData);
+    fs.unlink(file.path, () => {});
+
+    res.json({ message: "Heart rate session uploaded." });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to process heart rate CSV." });
+  }
+});
+
 
 module.exports = router;
