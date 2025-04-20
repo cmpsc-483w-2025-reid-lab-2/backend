@@ -127,53 +127,45 @@ router.get("/upload/heart-rate", (req, res) => {
 router.post("/upload/heart-rate", upload.single("heartRateFile"), async (req, res) => {
   const file = req.file;
 
-  console.log("📥 Received heart rate CSV upload");
-
   if (!file) {
-    return res.status(400).json({ error: "CSV file is required." });
+    return res.status(400).json({ error: "Heart rate CSV file is required." });
   }
 
   try {
-    const results = [];
+    const heartData = await parseCsv(file.path);
+    if (heartData.length === 0) {
+      return res.status(400).json({ error: "No valid heart rate data found." });
+    }
 
-    fs.createReadStream(file.path)
-      .pipe(csv())
-      .on("data", (data) => results.push(data))
-      .on("end", () => {
-        if (results.length === 0) {
-          return res.status(400).json({ error: "CSV is empty." });
-        }
+    // Get the most recent session_id from mantis_data_sessions
+    const [rows] = await connection.promise().query(
+      "SELECT session_id FROM mantis_data_sessions ORDER BY session_id DESC LIMIT 1"
+    );
+    const latestSessionId = rows[0]?.session_id;
 
-        const row = results[0]; // Expecting just one row
+    if (!latestSessionId) {
+      return res.status(400).json({ error: "No MANTIS session found to link heart rate." });
+    }
 
-        const entry = {
-          // session_id: row.session_id,
-          user_id: row.user_id,
-          time_started: row.time_started,
-          avg_rate: row.avg_rate,
-          max_rate: row.max_rate,
-          min_rate: row.min_rate,
-        };
+    const values = heartData.map(entry => ({
+      session_id: latestSessionId,
+      user_id: entry.user_id || 1,
+      time_started: entry.time_started,
+      avg_rate: entry.avg_rate,
+      max_rate: entry.max_rate,
+      min_rate: entry.min_rate,
+    }));
 
-        connection.query("INSERT INTO heart_data SET ?", entry, (err) => {
-          fs.unlink(file.path, () => {}); // cleanup file
+    // Insert each row
+    for (const row of values) {
+      await connection.promise().query("INSERT INTO heart_data SET ?", row);
+    }
 
-          if (err) {
-            console.error(err);
-            return res.status(500).json({ error: "Database insert failed." });
-          }
-
-          res.json({ message: "Heart rate CSV uploaded and saved." });
-        });
-      })
-      .on("error", (err) => {
-        fs.unlink(file.path, () => {});
-        console.error("CSV parse error:", err);
-        res.status(500).json({ error: "Failed to parse CSV." });
-      });
+    fs.unlink(file.path, () => {});
+    res.json({ message: "Heart rate data uploaded and linked to latest session." });
   } catch (err) {
-    console.error("File upload error:", err);
-    res.status(500).json({ error: "Server failed to process the CSV file." });
+    console.error("Heart rate CSV processing error:", err);
+    res.status(500).json({ error: "Server failed to process heart rate CSV." });
   }
 });
 
