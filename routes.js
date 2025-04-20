@@ -39,10 +39,29 @@ function parseMantisCsv(filePath) {
         })
         .on("end", () => {
           fs.unlink(tempPath, () => {}); // cleanup temp
-          resolve(outputRows);
+          resolve(outputRows);  
         })
         .on("error", reject);
     });
+  });
+}
+
+function parseHeartRateCsv(filePath) {
+  return new Promise((resolve, reject) => {
+    const results = [];
+
+    fs.createReadStream(filePath)
+      .pipe(csv())
+      .on("data", (row) => {
+        // Expecting headers: time_started,user_id,avg_rate,max_rate,min_rate
+        if (row["time_started"] && row["user_id"] && row["avg_rate"]) {
+          results.push(row);
+        }
+      })
+      .on("end", () => {
+        resolve(results);
+      })
+      .on("error", reject);
   });
 }
 
@@ -132,7 +151,7 @@ router.post("/upload/heart-rate", upload.single("heartRateFile"), async (req, re
   }
 
   try {
-    const heartData = await parseCsv(file.path);
+    const heartData = await parseHeartRateCsv(file.path);
     if (heartData.length === 0) {
       return res.status(400).json({ error: "No valid heart rate data found." });
     }
