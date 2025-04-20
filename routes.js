@@ -117,11 +117,17 @@ router.post("/upload", upload.single("mantisFile"), async (req, res) => {
   }
 });
 
+// GET route for sanity checking route is good
+router.get("/upload/heart-rate", (req, res) => {
+  res.send("Backend route is alive!");
+});
 
 // POST route to upload heart rate CSV.
 // Endpoint for Kotlin/WearOS app to upload heart rate CSV
 router.post("/upload/heart-rate", upload.single("heartRateFile"), async (req, res) => {
   const file = req.file;
+
+  console.log("📥 Received heart rate CSV upload");
 
   if (!file) {
     return res.status(400).json({ error: "CSV file is required." });
