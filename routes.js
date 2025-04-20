@@ -71,7 +71,7 @@ router.post("/users", (req, res) => {
   });
 });
 
-// POST route to upload two CSV files (heart rate + mantis shots)
+// POST route to upload Mantis Sessions CSV file
 router.post("/upload", upload.single("mantisFile"), async (req, res) => {
   const file = req.file;
 
@@ -117,47 +117,60 @@ router.post("/upload", upload.single("mantisFile"), async (req, res) => {
   }
 });
 
+
 // POST route to upload heart rate CSV.
-// Kotlin client side uses this to post the heart rate CSV into the database.
-router.post("/upload/heart", upload.single("heartCsv"), async (req, res) => {
+// Endpoint for Kotlin/WearOS app to upload heart rate CSV
+router.post("/upload/heart-rate", upload.single("heartRateFile"), async (req, res) => {
   const file = req.file;
-  const userId = req.body.user_id || 1; 
 
   if (!file) {
-    return res.status(400).json({ error: "Heart CSV is required." });
+    return res.status(400).json({ error: "CSV file is required." });
   }
 
   try {
-    const rows = await parseCsv(file.path);
+    const results = [];
 
-    if (rows.length === 0) {
-      return res.status(400).json({ error: "CSV has no usable data." });
-    }
+    fs.createReadStream(file.path)
+      .pipe(csv())
+      .on("data", (data) => results.push(data))
+      .on("end", () => {
+        if (results.length === 0) {
+          return res.status(400).json({ error: "CSV is empty." });
+        }
 
-    const avgRate = rows.reduce((sum, r) => sum + parseInt(r["rate"]), 0) / rows.length;
-    const maxRate = Math.max(...rows.map(r => parseInt(r["rate"])));
-    const minRate = Math.min(...rows.map(r => parseInt(r["rate"])));
-    const timeStarted = new Date(rows[0]["timestamp"]);
-    const sessionLength = new Date(new Date(rows[rows.length - 1]["timestamp"]) - timeStarted);
+        const row = results[0]; // Expecting just one row
 
-    const sessionData = {
-      user_id: userId,
-      avg_rate: avgRate,
-      max_rate: maxRate,
-      min_rate: minRate,
-      time_started: timeStarted,
-      session_length: sessionLength,
-    };
+        const entry = {
+          session_id: row.session_id,
+          user_id: row.user_id,
+          time_started: row.time_started,
+          avg_rate: row.avg_rate,
+          max_rate: row.max_rate,
+          min_rate: row.min_rate,
+        };
 
-    await connection.promise().query("INSERT INTO heart_data SET ?", sessionData);
-    fs.unlink(file.path, () => {});
+        connection.query("INSERT INTO heart_data SET ?", entry, (err) => {
+          fs.unlink(file.path, () => {}); // cleanup file
 
-    res.json({ message: "Heart rate session uploaded." });
+          if (err) {
+            console.error(err);
+            return res.status(500).json({ error: "Database insert failed." });
+          }
+
+          res.json({ message: "Heart rate CSV uploaded and saved." });
+        });
+      })
+      .on("error", (err) => {
+        fs.unlink(file.path, () => {});
+        console.error("CSV parse error:", err);
+        res.status(500).json({ error: "Failed to parse CSV." });
+      });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to process heart rate CSV." });
+    console.error("File upload error:", err);
+    res.status(500).json({ error: "Server failed to process the CSV file." });
   }
 });
+
 
 
 module.exports = router;

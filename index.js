@@ -10,7 +10,7 @@ app.use(bodyParser.json()); // Middleware to parse JSON
 app.use(cors()); // Enable Cross-Origin Resource Sharing (CORS)
 
 // Use the routes defined in routes.js
-app.use("/api", routes);
+app.use("https://reid-lab2-backend.onrender.com/api", routes);
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
