@@ -147,7 +147,7 @@ router.post("/upload/heart-rate", upload.single("heartRateFile"), async (req, re
         const row = results[0]; // Expecting just one row
 
         const entry = {
-          session_id: row.session_id,
+          // session_id: row.session_id,
           user_id: row.user_id,
           time_started: row.time_started,
           avg_rate: row.avg_rate,
