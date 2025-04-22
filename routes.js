@@ -189,5 +189,62 @@ router.post("/upload/heart-rate", upload.single("heartRateFile"), async (req, re
 });
 
 
+router.get("/performance-by-day", async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        DAYNAME(time_started) AS day,
+        ROUND(AVG(avg_score), 1) AS score
+      FROM mantis_data_sessions
+      GROUP BY DAYOFWEEK(time_started), day
+      ORDER BY DAYOFWEEK(time_started)`;
+
+    const [rows] = await connection.query(query);
+
+    const formattedData = rows.map(row => ({
+      day: row.day.substring(0, 3),
+      score: row.score
+    }));
+
+    res.status(200).json(formattedData);
+  } catch (err) {
+    console.error("Performance by day error:", err);
+    res.status(500).json({ error: 'Failed to get performance data' });
+  }
+});
+
+// GET heart rate correlation
+router.get("/heart-rate-correlation", async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        CASE
+          WHEN hr.avg_rate BETWEEN 100 AND 109 THEN '100-110'
+          WHEN hr.avg_rate BETWEEN 110 AND 119 THEN '110-120'
+          WHEN hr.avg_rate BETWEEN 120 AND 129 THEN '120-130'
+          WHEN hr.avg_rate BETWEEN 130 AND 139 THEN '130-140'
+          WHEN hr.avg_rate BETWEEN 140 AND 149 THEN '140-150'
+          WHEN hr.avg_rate BETWEEN 150 AND 159 THEN '150-160'
+          ELSE '160+'
+        END AS heartRate,
+        ROUND(AVG(m.avg_score), 1) AS score
+      FROM (
+        SELECT 
+          session_id,
+          AVG(avg_rate) AS avg_rate
+        FROM heart_data
+        GROUP BY session_id
+      ) hr
+      JOIN mantis_data_sessions m ON hr.session_id = m.session_id
+      GROUP BY heartRate
+      ORDER BY heartRate`;
+
+    const [rows] = await connection.query(query);
+    res.status(200).json(rows);
+  } catch (err) {
+    console.error("Heart rate correlation error:", err);
+    res.status(500).json({ error: 'Failed to get heart rate correlation data' });
+  }
+});
 
 module.exports = router;
