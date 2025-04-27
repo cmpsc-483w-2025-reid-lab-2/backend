@@ -188,7 +188,7 @@ router.post("/upload/heart-rate", upload.single("heartRateFile"), async (req, re
   }
 });
 
-
+// GET route to get the performance by day graph populated
 router.get("/performance-by-day", async (req, res) => {
   try {
     const query = `
