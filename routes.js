@@ -199,7 +199,7 @@ router.get("/performance-by-day", async (req, res) => {
       GROUP BY DAYOFWEEK(time_started), day
       ORDER BY DAYOFWEEK(time_started)`;
 
-    const [rows] = await connection.query(query);
+    const [rows] = await connection.promise().query(query);
 
     const formattedData = rows.map(row => ({
       day: row.day.substring(0, 3),
@@ -239,7 +239,8 @@ router.get("/heart-rate-correlation", async (req, res) => {
       GROUP BY heartRate
       ORDER BY heartRate`;
 
-    const [rows] = await connection.query(query);
+    const [rows] = await connection.promise().query(query);
+    
     res.status(200).json(rows);
   } catch (err) {
     console.error("Heart rate correlation error:", err);
